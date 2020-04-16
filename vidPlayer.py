@@ -22,6 +22,8 @@ class Window(QWidget):
         p.setColor(QPalette.Window, Qt.black)
         self.setPalette(p)
 
+        self.setFocusPolicy(Qt.StrongFocus)
+
         self.num_panels = 0
 
         self.init_ui()
@@ -140,6 +142,37 @@ class Window(QWidget):
         #fileMenu.addAction(addPanelAction)
         fileMenu.addAction(addPanelFileAction)
         fileMenu.addAction(openVideoAction)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space:
+            if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
+                self.mediaPlayer.pause()
+
+            else:
+                self.mediaPlayer.play()
+
+        elif event.key() == Qt.Key_Right:
+
+            p = self.slider.value()
+            p = p + 5000
+
+            self.set_position(p)
+            self.position_changed(p)
+
+        elif event.key() == Qt.Key_Left:
+
+            p = self.slider.value()
+            p = p - 5000
+
+            self.set_position(p)
+            self.position_changed(p)
+
+        elif event.key() == Qt.Key_F5:
+
+            self.close()
+        else:
+
+            super().keyPressEvent(event)
 
     def open_video(self):
         # opens video file, create the directory for the videos outputs, play the video
@@ -288,6 +321,7 @@ class Window(QWidget):
         self.scroll[self.panel_index].setWidget(self.groupbox[self.panel_index])
         self.scroll[self.panel_index].setWidgetResizable(True)
         self.scroll[self.panel_index].setFixedWidth(120)
+        self.scroll[self.panel_index].setFocusPolicy(Qt.StrongFocus)
         self.mainLayout.addWidget(self.scroll[self.panel_index])
 
     def position_changed(self, position):
@@ -295,7 +329,6 @@ class Window(QWidget):
 
     def get_position(self):
         p = self.mediaPlayer.position()
-        print(p)
 
     def duration_changed(self, duration):
         self.slider.setRange(0, duration)
@@ -309,11 +342,13 @@ class Window(QWidget):
         self.label.setText("Error: " + self.mediaPlayer.errorString())
 
     def getSliderValue(self):
-        # TODO: display time format
+
         value = self.slider.value()
         value = value // 1000
+        min, sec = divmod(value, 60)
+        hour, min = divmod(min, 60)
 
-        return value
+        return "%d:%02d:%02d" % (hour, min, sec)
 
     def onstartbuttonClicked(self, panel_index,i):
         value = self.getSliderValue()

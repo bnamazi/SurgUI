@@ -320,7 +320,7 @@ class Window(QWidget):
         self.scroll[self.panel_index] = QScrollArea()
         self.scroll[self.panel_index].setWidget(self.groupbox[self.panel_index])
         self.scroll[self.panel_index].setWidgetResizable(True)
-        self.scroll[self.panel_index].setFixedWidth(120)
+        self.scroll[self.panel_index].setFixedWidth(200)
         self.scroll[self.panel_index].setFocusPolicy(Qt.StrongFocus)
         self.mainLayout.addWidget(self.scroll[self.panel_index])
 

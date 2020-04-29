@@ -1,0 +1,14 @@
+Phase - Isolate gallbladder 
+Task - Explore anatomy 
+Subtask - Aspirate gallbladder
+Task - Isolate Triangle
+Subtask - Detach tissue
+Subtask - Dissect tissue
+Task - Isolate cystic duct
+SubTask - Clip cystic duct
+Subtask - Dvide cystic duct
+Isolate - Isolate cystic artery
+Subtask Clips cystic artery
+Subtask Divide cystic artery
+Task - Dissect gallbladder
+Subtask - Cauterize

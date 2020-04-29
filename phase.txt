@@ -1,5 +1,5 @@
-phase 1
-phase 2
-phase 3
-phase 4
-phase 5
+Establishment of pneumoperitoneum
+Placement of trocars
+Isolate gallbladder
+Remove gallbladder
+Closure

@@ -4,7 +4,7 @@ import sys
 import os
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget
-from PyQt5.QtGui import QIcon, QPalette, QFont
+from PyQt5.QtGui import QIcon, QPalette
 from PyQt5.QtCore import Qt, QUrl
 from PyQt5.QtCore import *
 from PyQt5.QtWidgets import *
@@ -287,8 +287,6 @@ class Window(QWidget):
 
         self.form_title[self.panel_index] = QLabel(title)
         self.form_title[self.panel_index].setStyleSheet('color: white')
-        self.form_title[self.panel_index].setFont(QFont("Times", 16, QFont.Bold))
-
         self.panelRemoveBtn[self.panel_index] = QPushButton('Exit')
         self.panelRemoveBtn[self.panel_index].clicked.connect(partial(self.onpanelRemoveBtnClicked, self.panel_index))
 
@@ -299,19 +297,18 @@ class Window(QWidget):
         for i, line in enumerate (lines):
             self.tasklist[self.panel_index].append(QLabel(line))
             self.tasklist[self.panel_index][i].setStyleSheet('background-color: black ; color: white')
-            self.tasklist[self.panel_index][i].setFont(QFont("Times", 10, QFont.Bold))
             self.startingButtonlist[self.panel_index].append(QPushButton('starts'))
             self.startingButtonlist[self.panel_index][i].setFixedWidth(50)
-            self.startingTimelist[self.panel_index].append(QLabel("%d:%02d:%02d" % (0, 0, 0)))
+            self.startingTimelist[self.panel_index].append(QLabel('0'))
             self.startingTimelist[self.panel_index][i].setStyleSheet('color: white')
             self.startingButtonlist[self.panel_index][i].clicked.connect(partial(self.onstartbuttonClicked, self.panel_index, i))
             self.endingButtonlist[self.panel_index].append(QPushButton('ends'))
             self.endingButtonlist[self.panel_index][i].setFixedWidth(50)
-            self.endingTimelist[self.panel_index].append(QLabel("%d:%02d:%02d" % (0, 0, 0)))
+            self.endingTimelist[self.panel_index].append(QLabel('0'))
             self.endingTimelist[self.panel_index][i].setStyleSheet('color: white')
             self.endingButtonlist[self.panel_index][i].clicked.connect(partial(self.onendbuttonClicked, self.panel_index, i))
             self.saveEntryBtn[self.panel_index].append(QPushButton('save'))
-            self.saveEntryBtn[self.panel_index][i].setFixedWidth(130)
+            #self.saveEntryBtn[self.panel_index][i].setFixedWidth(30)
             self.saveEntryBtn[self.panel_index][i].setEnabled(False)
             self.saveEntryBtn[self.panel_index][i].clicked.connect(partial(self.onsaveEntryBtnClicked, self.panel_index, i))
             self.formLayout[self.panel_index].addRow(self.tasklist[self.panel_index][i])
@@ -323,7 +320,7 @@ class Window(QWidget):
         self.scroll[self.panel_index] = QScrollArea()
         self.scroll[self.panel_index].setWidget(self.groupbox[self.panel_index])
         self.scroll[self.panel_index].setWidgetResizable(True)
-        self.scroll[self.panel_index].setFixedWidth(160)
+        self.scroll[self.panel_index].setFixedWidth(120)
         self.scroll[self.panel_index].setFocusPolicy(Qt.StrongFocus)
         self.mainLayout.addWidget(self.scroll[self.panel_index])
 

@@ -2,13 +2,17 @@ from PyQt5.QtWidgets import QApplication, QWidget, QAction, QPushButton, QHBoxLa
     QSlider, QStyle, QSizePolicy, QFileDialog, QLineEdit, QFormLayout, QGroupBox, QScrollArea, QMainWindow
 import sys
 import os
+import platform
+import cv2
+import vlc
 from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer, QVideoFrame, QAbstractVideoSurface, QAbstractVideoBuffer, \
     QVideoSurfaceFormat
 from PyQt5.QtMultimediaWidgets import QVideoWidget
-from PyQt5.QtGui import QIcon, QPalette, QImage, QPainter
+from PyQt5.QtGui import QIcon, QPalette, QImage, QPainter, QFont
 from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QPoint, QRect, QObject
 from PyQt5.QtCore import *
 from PyQt5.QtWidgets import *
+from PyQt5 import QtWidgets
 from functools import partial
 
 
@@ -129,6 +133,8 @@ class Window(QWidget):
 
         self.num_panels = 0
 
+        self.is_paused = False
+
         self.init_ui()
 
         self.showMaximized()
@@ -138,29 +144,22 @@ class Window(QWidget):
         if not os.path.exists('outputs'):
             os.mkdir('outputs')
 
+        self.instance = vlc.Instance()
+        self.media = None
         # create media player object
-        self.mediaPlayer = QMediaPlayer(None, QMediaPlayer.VideoSurface)
-        self.mediaPlayer_g = QMediaPlayer(None, QMediaPlayer.VideoSurface)
-        # self.mediaPlayer.setNotifyInterval(1000)
-        #self.mediaPlayer.setPlaybackRate(1)
-        #self.mediaPlayer_g.setPlaybackRate(1)
-        self.videoFrame = QVideoFrame()
+        self.mediaPlayer = self.instance.media_player_new()  # QMediaPlayer(None, QMediaPlayer.VideoSurface)
+
+        # In this widget, the video will be drawn
+        if platform.system() == "Darwin":  # for MacOS
+            self.videowidget = QtWidgets.QMacCocoaViewContainer(0)
+        elif platform.system() == "Windows":
+            self.videowidget = QtWidgets.QFrame()
+        else:
+            self.videowidget = QtWidgets.QMacCocoaViewContainer(0)
         # create videowidget object
-        self.videowidget = QVideoWidget()
+        # self.videowidget = QVideoWidget()
         self.videowidget_g = QVideoWidget()
-        self.mediaPlayer.setVideoOutput(self.videowidget)
 
-        # media player signals
-        self.mediaPlayer.stateChanged.connect(self.mediastate_changed)
-        self.mediaPlayer.positionChanged.connect(self.position_changed)
-        self.mediaPlayer.durationChanged.connect(self.duration_changed)
-        self.mediaPlayer_g.stateChanged.connect(self.mediastate_changed)
-        self.mediaPlayer_g.positionChanged.connect(self.position_changed)
-        self.mediaPlayer_g.durationChanged.connect(self.duration_changed)
-
-        self.grabber = VideoFrameGrabber(self.videowidget_g, self)
-        self.mediaPlayer_g.setVideoOutput(self.grabber)
-        self.grabber.frameAvailable.connect(self.buffer_frame)
         # create open button
         openBtn = QPushButton('Open Video')
         openBtn.clicked.connect(self.open_video)
@@ -168,7 +167,7 @@ class Window(QWidget):
         # create button for taking a snapshot
         snapBtn = QPushButton('snapshot (save the image)')
         snapBtn.clicked.connect(self.screenshotCall)
-        #snapBtn.setEnabled(True)
+        # snapBtn.setEnabled(True)
         self.ImagesBuffer = None
 
         # create button for playing
@@ -177,17 +176,27 @@ class Window(QWidget):
         self.playBtn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
         self.playBtn.clicked.connect(self.play_video)
 
+        self.twoxBtn = QPushButton('2X')
+        self.twoxBtn.setEnabled(True)
+        self.twoxBtn.setFixedWidth(30)
+
         # create slider
         self.slider = QSlider(Qt.Horizontal)
-        self.slider.setRange(0, 0)
-        self.slider.setSingleStep(5000)
-        self.slider.sliderMoved.connect(self.set_position)
-        self.slider.valueChanged.connect(self.set_position)
+        #self.slider.setRange(0, 0)
+        #self.slider.setSingleStep(5000)
+        self.slider.setMaximum(10000)
+        self.slider.sliderMoved.connect(self.position_changed)
+        # self.slider.valueChanged.connect(self.set_position)
+        self.slider.sliderPressed.connect(self.position_changed)
 
         # create LCD for displaying the position of the slider
         # self.lcd = QLCDNumber(self)
-        self.l = QLabel(self)
+        self.l = QLabel('0:00:00')
+        self.l.setStyleSheet('color: white')
         self.slider.valueChanged.connect(self.display_time)  # (self.lcd.display)
+        self.d =QLabel('0:00:00')
+        self.d.setStyleSheet('color: white')
+
 
         # create label
         self.label = QLabel()
@@ -201,6 +210,11 @@ class Window(QWidget):
         hboxLayout.addWidget(self.playBtn)
         hboxLayout.addWidget(self.l)
         hboxLayout.addWidget(self.slider)
+        hboxLayout.addWidget(self.d)
+        hboxLayout.addWidget(self.playBtn)
+
+        bottomLayout = QHBoxLayout()
+        bottomLayout.addWidget(snapBtn)
 
         # create vbox layout
         vboxLayout = QVBoxLayout()
@@ -208,7 +222,7 @@ class Window(QWidget):
         # vboxLayout.addWidget(openBtn)
         vboxLayout.addWidget(self.videowidget)
         vboxLayout.addLayout(hboxLayout)
-        vboxLayout.addWidget(snapBtn)
+        vboxLayout.addLayout(bottomLayout)
         vboxLayout.addWidget(self.label)
 
         self.mainLayout = QHBoxLayout()
@@ -226,6 +240,11 @@ class Window(QWidget):
         self.endingButtonlist = [None] * 10
         self.endingTimelist = [None] * 10
         self.saveEntryBtn = [None] * 10
+        self.clearEntryBtn = [None] * 10
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(100)
+        self.timer.timeout.connect(self.update_ui)
 
         self.setLayout(self.mainLayout)
 
@@ -248,35 +267,44 @@ class Window(QWidget):
         addPanelFileAction.setStatusTip('Add Panel From File')
         addPanelFileAction.triggered.connect(self.add_panel_from_file)
 
+        saveEntriesAction = QAction('&Save', self)
+        saveEntriesAction.setStatusTip('Save all entries')
+        saveEntriesAction.setShortcut('Ctrl+S')
+        saveEntriesAction.triggered.connect(self.save)
+
+        clearPanelsAction = QAction('&Clear Panels', self)
+        clearPanelsAction.setStatusTip('Clear all panels')
+        clearPanelsAction.setShortcut('Ctrl+C')
+        clearPanelsAction.triggered.connect(self.clearPanels)
+
+        exitAction = QAction('&Exit', self )
+        exitAction.setStatusTip('Exit')
+        exitAction.setShortcut('Ctrl+Q')
+        exitAction.triggered.connect(self.close)
+
         # fileMenu.addAction(addPanelAction)
         fileMenu.addAction(addPanelFileAction)
         fileMenu.addAction(openVideoAction)
+        fileMenu.addAction(saveEntriesAction)
+        fileMenu.addAction(clearPanelsAction)
+        fileMenu.addAction(exitAction)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space:
-            if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
-                self.mediaPlayer.pause()
-                self.mediaPlayer_g.pause()
+            self.play_video()
 
-            else:
-                self.mediaPlayer.play()
-                self.mediaPlayer_g.play()
 
         elif event.key() == Qt.Key_Right:
-
             p = self.slider.value()
-            p = p + 5000
-
+            p = p + 5 * int (10000000  / self.media.get_duration() )
             self.set_position(p)
-            self.position_changed(p)
 
         elif event.key() == Qt.Key_Left:
 
             p = self.slider.value()
-            p = p - 5000
-
+            p = p - 5 * int (10000000  / self.media.get_duration() )
             self.set_position(p)
-            self.position_changed(p)
+
 
         elif event.key() == Qt.Key_F5:
 
@@ -287,13 +315,28 @@ class Window(QWidget):
 
     def open_video(self):
         # opens video file, create the directory for the videos outputs, play the video
-        filename, _ = QFileDialog.getOpenFileName(self, "Open Video")
+        filename, _ = QFileDialog.getOpenFileName(self, "Open Video")#, filter="Videos (*.Mmov, *.mp4)")
 
         if filename != '':
-            self.mediaPlayer.setMedia(QMediaContent(QUrl.fromLocalFile(filename)))
-            self.mediaPlayer_g.setMedia(QMediaContent(QUrl.fromLocalFile(filename)))
+            # self.mediaPlayer.setMedia(QMediaContent(QUrl.fromLocalFile(filename)))
+            self.media = self.instance.media_new(filename)
+            self.mediaPlayer.set_media(self.media)
+            self.media.parse()
+            self.setWindowTitle(self.media.get_meta(0))
+
             self.playBtn.setEnabled(True)
+
+            if platform.system() == "Linux":  # for Linux using the X Server
+                self.mediaPlayer.set_xwindow(int(self.videowidget.winId()))
+            elif platform.system() == "Windows":  # for Windows
+                self.mediaPlayer.set_hwnd(int(self.videowidget.winId()))
+            else:  # if platform.system() == "Darwin":  # for MacOS
+                self.mediaPlayer.set_nsobject(int(self.videowidget.winId()))
+
+            self.cap = cv2.VideoCapture(filename)
             self.play_video()
+
+            self.d.setText(str(self.getDurationValue()))
 
             directory = (os.path.basename(filename))
             self.vidname = directory
@@ -305,88 +348,46 @@ class Window(QWidget):
                 os.mkdir('outputs/' + directory + '/images')
             self.image_save_directory = 'outputs/' + directory + '/images'
 
+            # clear panels
+            if self.num_panels > 0:
+                self.clearPanels()
+
 
     def play_video(self):
-        if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
+        if self.mediaPlayer.is_playing():
             self.mediaPlayer.pause()
-            self.mediaPlayer_g.pause()
+            self.is_paused = True
+            ##self.mediaPlayer_g.pause()
+            self.playBtn.setIcon(
+                self.style().standardIcon(QStyle.SP_MediaPlay)
+            )
+            self.timer.stop()
+
 
         else:
             self.mediaPlayer.play()
-            self.mediaPlayer_g.play()
-
-    def display_time(self):
-        time = self.getSliderValue()
-        self.l.setText(str(time))
-        self.l.setStyleSheet('color: white')
-
-    def mediastate_changed(self, state):
-        if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
+            ##self.mediaPlayer_g.play()
+            self.timer.start()
+            self.is_paused = False
             self.playBtn.setIcon(
                 self.style().standardIcon(QStyle.SP_MediaPause)
             )
 
-        else:
-            self.playBtn.setIcon(
-                self.style().standardIcon(QStyle.SP_MediaPlay)
-            )
+    def display_time(self):
+
+        time = self.getSliderValue()
+        self.l.setText( '{}'.format(str(time)))
 
     def add_panel(self):
         # for manually added panels
-        self.num_panels += 1
-
-        self.panel_index = self.num_panels
-
-        self.tasklist[self.panel_index] = []
-        self.startingButtonlist[self.panel_index] = []
-        self.startingTimelist[self.panel_index] = []
-        self.endingButtonlist[self.panel_index] = []
-        self.endingTimelist[self.panel_index] = []
-
-        self.groupbox[self.panel_index] = QGroupBox()
-        self.formLayout[self.panel_index] = QFormLayout()
-
-        self.form_title[self.panel_index] = QLineEdit()
-        self.panelRemoveBtn[self.panel_index] = QPushButton('Exit')
-        self.panelRemoveBtn[self.panel_index].clicked.connect(partial(self.onpanelRemoveBtnClicked, self.panel_index))
-
-        self.formLayout[self.panel_index].addRow(
-            self.form_title[self.panel_index])  # , self.panelRemoveBtn[self.panel_index])
-
-        for i in range(35):
-            self.tasklist[self.panel_index].append(QLineEdit('Task {}'.format(str(i))))
-            self.tasklist[self.panel_index][i].setStyleSheet('background-color: black ; color: white')
-            self.startingButtonlist[self.panel_index].append(QPushButton('starts'))
-            self.startingButtonlist[self.panel_index][i].setFixedWidth(50)
-            self.startingTimelist[self.panel_index].append(QLabel('0'))
-            self.startingTimelist[self.panel_index][i].setStyleSheet('color: white')
-            self.startingButtonlist[self.panel_index][i].clicked.connect(
-                partial(self.onstartbuttonClicked, self.panel_index, i))
-            self.endingButtonlist[self.panel_index].append(QPushButton('ends'))
-            self.endingButtonlist[self.panel_index][i].setFixedWidth(50)
-            self.endingTimelist[self.panel_index].append(QLabel('0'))
-            self.endingTimelist[self.panel_index][i].setStyleSheet('color: white')
-            self.endingButtonlist[self.panel_index][i].clicked.connect(
-                partial(self.onendbuttonClicked, self.panel_index, i))
-            self.formLayout[self.panel_index].addRow(self.tasklist[self.panel_index][i])
-            self.formLayout[self.panel_index].addRow(self.startingButtonlist[self.panel_index][i],
-                                                     self.startingTimelist[self.panel_index][i])
-            self.formLayout[self.panel_index].addRow(self.endingButtonlist[self.panel_index][i],
-                                                     self.endingTimelist[self.panel_index][i])
-
-        self.groupbox[self.panel_index].setLayout(self.formLayout[self.panel_index])
-        self.scroll[self.panel_index] = QScrollArea()
-        self.scroll[self.panel_index].setWidget(self.groupbox[self.panel_index])
-        self.scroll[self.panel_index].setWidgetResizable(True)
-        self.scroll[self.panel_index].setFixedWidth(120)
-        self.mainLayout.addWidget(self.scroll[self.panel_index])
+        pass
 
     def onpanelRemoveBtnClicked(self, panel_index):
         pass
-        # self.mainLayout.removeWidget(self.scroll[panel_index])
+        # self.mainLayout.removeWidget(self.scroll[panel_index]) deleteLater()
 
     def add_panel_from_file(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Open Text")
+        filename, _ = QFileDialog.getOpenFileName(self, "Open Text", filter= "Text files (*.txt)")
 
         if filename != '':
             title = str(os.path.basename(filename)).split('.')[0]
@@ -394,65 +395,89 @@ class Window(QWidget):
                 lines = f.read().splitlines()
             print('opened panel', title)
 
-        self.num_panels += 1
+            self.num_panels += 1
 
-        self.panel_index = self.num_panels
+            self.panel_index = self.num_panels
 
-        self.tasklist[self.panel_index] = []
-        self.startingButtonlist[self.panel_index] = []
-        self.startingTimelist[self.panel_index] = []
-        self.endingButtonlist[self.panel_index] = []
-        self.endingTimelist[self.panel_index] = []
-        self.saveEntryBtn[self.panel_index] = []
+            self.tasklist[self.panel_index] = []
+            self.startingButtonlist[self.panel_index] = []
+            self.startingTimelist[self.panel_index] = []
+            self.endingButtonlist[self.panel_index] = []
+            self.endingTimelist[self.panel_index] = []
+            self.saveEntryBtn[self.panel_index] = []
+            self.clearEntryBtn[self.panel_index] = []
 
-        self.groupbox[self.panel_index] = QGroupBox()
-        self.formLayout[self.panel_index] = QFormLayout()
+            self.groupbox[self.panel_index] = QGroupBox()
+            self.formLayout[self.panel_index] = QFormLayout()
 
-        self.form_title[self.panel_index] = QLabel(title)
-        self.form_title[self.panel_index].setStyleSheet('color: white')
-        self.panelRemoveBtn[self.panel_index] = QPushButton('Exit')
-        self.panelRemoveBtn[self.panel_index].clicked.connect(partial(self.onpanelRemoveBtnClicked, self.panel_index))
+            self.form_title[self.panel_index] = QLabel(title)
+            self.form_title[self.panel_index].setStyleSheet('color: white')
+            self.form_title[self.panel_index].setAlignment(Qt.AlignCenter)
+            self.form_title[self.panel_index].setFont(QFont("Times", 12, weight=QFont.Bold))
+            self.panelRemoveBtn[self.panel_index] = QPushButton('Exit')
+            self.panelRemoveBtn[self.panel_index].clicked.connect(partial(self.onpanelRemoveBtnClicked, self.panel_index))
 
-        self.formLayout[self.panel_index].addRow(
-            self.form_title[self.panel_index])  # , self.panelRemoveBtn[self.panel_index])
+            self.formLayout[self.panel_index].addRow(
+                self.form_title[self.panel_index])  # , self.panelRemoveBtn[self.panel_index])
 
-        for i, line in enumerate(lines):
-            self.tasklist[self.panel_index].append(QLabel(line))
-            self.tasklist[self.panel_index][i].setStyleSheet('background-color: black ; color: white')
-            self.startingButtonlist[self.panel_index].append(QPushButton('starts'))
-            self.startingButtonlist[self.panel_index][i].setFixedWidth(50)
-            self.startingTimelist[self.panel_index].append(QLabel('0'))
-            self.startingTimelist[self.panel_index][i].setStyleSheet('color: white')
-            self.startingButtonlist[self.panel_index][i].clicked.connect(
-                partial(self.onstartbuttonClicked, self.panel_index, i))
-            self.endingButtonlist[self.panel_index].append(QPushButton('ends'))
-            self.endingButtonlist[self.panel_index][i].setFixedWidth(50)
-            self.endingTimelist[self.panel_index].append(QLabel('0'))
-            self.endingTimelist[self.panel_index][i].setStyleSheet('color: white')
-            self.endingButtonlist[self.panel_index][i].clicked.connect(
-                partial(self.onendbuttonClicked, self.panel_index, i))
-            self.saveEntryBtn[self.panel_index].append(QPushButton('save'))
-            # self.saveEntryBtn[self.panel_index][i].setFixedWidth(30)
-            self.saveEntryBtn[self.panel_index][i].setEnabled(False)
-            self.saveEntryBtn[self.panel_index][i].clicked.connect(
-                partial(self.onsaveEntryBtnClicked, self.panel_index, i))
-            self.formLayout[self.panel_index].addRow(self.tasklist[self.panel_index][i])
-            self.formLayout[self.panel_index].addRow(self.startingButtonlist[self.panel_index][i],
-                                                     self.startingTimelist[self.panel_index][i])
-            self.formLayout[self.panel_index].addRow(self.endingButtonlist[self.panel_index][i],
-                                                     self.endingTimelist[self.panel_index][i])
-            self.formLayout[self.panel_index].addRow(self.saveEntryBtn[self.panel_index][i])
+            for i, line in enumerate(lines):
+                line = line.split('#')
 
-        self.groupbox[self.panel_index].setLayout(self.formLayout[self.panel_index])
-        self.scroll[self.panel_index] = QScrollArea()
-        self.scroll[self.panel_index].setWidget(self.groupbox[self.panel_index])
-        self.scroll[self.panel_index].setWidgetResizable(True)
-        self.scroll[self.panel_index].setFixedWidth(120)
-        self.scroll[self.panel_index].setFocusPolicy(Qt.StrongFocus)
-        self.mainLayout.addWidget(self.scroll[self.panel_index])
+                self.tasklist[self.panel_index].append(QLabel(line[0]))
+                self.tasklist[self.panel_index][i].setStyleSheet('background-color: black ; color: white')
+                self.tasklist[self.panel_index][i].setFont(QFont("Times", 10, weight=QFont.Bold))
+                self.tasklist[self.panel_index][i].setWordWrap(True)
+                self.startingButtonlist[self.panel_index].append(QPushButton('starts'))
+                self.startingButtonlist[self.panel_index][i].setFixedWidth(50)
+                self.startingTimelist[self.panel_index].append(QLabel('0'))
+                self.startingTimelist[self.panel_index][i].setStyleSheet('color: white')
+                self.startingButtonlist[self.panel_index][i].clicked.connect(
+                    partial(self.onstartbuttonClicked, self.panel_index, i))
+                self.endingButtonlist[self.panel_index].append(QPushButton('ends'))
+                self.endingButtonlist[self.panel_index][i].setFixedWidth(50)
+                self.endingTimelist[self.panel_index].append(QLabel('0'))
+                self.endingTimelist[self.panel_index][i].setStyleSheet('color: white')
+                self.endingButtonlist[self.panel_index][i].clicked.connect(
+                    partial(self.onendbuttonClicked, self.panel_index, i))
+                if len(line) == 3:
+                    self.startingButtonlist[self.panel_index][i].setToolTip(line[1])
+                    self.endingButtonlist[self.panel_index][i].setToolTip(line[2])
+                self.saveEntryBtn[self.panel_index].append(QPushButton('save'))
+                self.clearEntryBtn[self.panel_index].append(QPushButton('clear'))
+                self.saveEntryBtn[self.panel_index][i].setFixedWidth(50)
+                self.clearEntryBtn[self.panel_index][i].setFixedWidth(50)
+                self.saveEntryBtn[self.panel_index][i].setEnabled(False)
+                self.saveEntryBtn[self.panel_index][i].clicked.connect(
+                    partial(self.onsaveEntryBtnClicked, self.panel_index, i))
+                self.clearEntryBtn[self.panel_index][i].setEnabled(False)
+                self.clearEntryBtn[self.panel_index][i].clicked.connect(
+                    partial(self.onclearEntryBtnClicked, self.panel_index, i))
 
-    def position_changed(self, position):
-        self.slider.setValue(position)
+                self.formLayout[self.panel_index].addRow(self.tasklist[self.panel_index][i])
+                self.formLayout[self.panel_index].addRow(self.startingButtonlist[self.panel_index][i],
+                                                         self.startingTimelist[self.panel_index][i])
+                self.formLayout[self.panel_index].addRow(self.endingButtonlist[self.panel_index][i],
+                                                         self.endingTimelist[self.panel_index][i])
+                self.formLayout[self.panel_index].addRow(self.saveEntryBtn[self.panel_index][i],
+                                                         self.clearEntryBtn[self.panel_index][i])
+
+            self.groupbox[self.panel_index].setLayout(self.formLayout[self.panel_index])
+            self.scroll[self.panel_index] = QScrollArea()
+            self.scroll[self.panel_index].setWidget(self.groupbox[self.panel_index])
+            self.scroll[self.panel_index].setWidgetResizable(True)
+            self.scroll[self.panel_index].setFixedWidth(150)
+            self.scroll[self.panel_index].setFocusPolicy(Qt.StrongFocus)
+            self.mainLayout.addWidget(self.scroll[self.panel_index])
+
+    def position_changed(self):
+        self.timer.stop()
+        pos = self.slider.value()
+
+        self.mediaPlayer.set_position(pos / 10000)
+        self.timer.start()
+        # self.slider.setValue(pos)
+
+
 
     def get_position(self):
         p = self.mediaPlayer.position()
@@ -461,8 +486,14 @@ class Window(QWidget):
         self.slider.setRange(0, duration)
 
     def set_position(self, position):
-        self.mediaPlayer.setPosition(position)
-        self.mediaPlayer_g.setPosition(position)
+
+        # self.slider.setValue(position)
+        self.timer.stop()
+        pos = self.slider.value()
+
+        self.mediaPlayer.set_position(position / 10000  )# / (self.media.get_duration()))
+        self.timer.start()
+
 
     def handle_errors(self):
         # TODO : create error handlers
@@ -471,7 +502,16 @@ class Window(QWidget):
 
     def getSliderValue(self):
 
-        value = self.slider.value()
+        value = int(self.mediaPlayer.get_position() * (self.media.get_duration()))
+        value = value // 1000
+        min, sec = divmod(value, 60)
+        hour, min = divmod(min, 60)
+
+        return "%d:%02d:%02d" % (hour, min, sec)
+
+    def getDurationValue(self):
+
+        value = int(self.media.get_duration())
         value = value // 1000
         min, sec = divmod(value, 60)
         hour, min = divmod(min, 60)
@@ -484,6 +524,7 @@ class Window(QWidget):
         self.startingTimelist[panel_index][i].setText(str(value))
         self.startingTimelist[panel_index][i].setStyleSheet('color: white')
         self.saveEntryBtn[panel_index][i].setEnabled(False)
+        self.clearEntryBtn[panel_index][i].setEnabled(True)
 
     def onendbuttonClicked(self, panel_index, i):
         value = self.getSliderValue()
@@ -491,6 +532,7 @@ class Window(QWidget):
         self.endingTimelist[panel_index][i].setText(str(value))
         self.endingTimelist[panel_index][i].setStyleSheet('color: white')
         self.saveEntryBtn[panel_index][i].setEnabled(True)
+        self.clearEntryBtn[panel_index][i].setEnabled(True)
 
     def onsaveEntryBtnClicked(self, panel_index, i):
         self.saveEntryBtn[panel_index][i].setEnabled(False)
@@ -501,12 +543,74 @@ class Window(QWidget):
         with open('{}/{}.txt'.format(self.save_directory, form_title), 'a') as f:
             f.write('{} : ({},{})\n'.format(task_name, starting_time, ending_time))
 
+        #self.startingTimelist[panel_index][i].setText('0')
+        #self.endingTimelist[panel_index][i].setText('0')
+
+    def onclearEntryBtnClicked(self, panel_index, i):
+        self.saveEntryBtn[panel_index][i].setEnabled(False)
+        self.clearEntryBtn[panel_index][i].setEnabled(False)
+        self.startingTimelist[panel_index][i].setText('0')
+        self.endingTimelist[panel_index][i].setText('0')
+
     def screenshotCall(self):
-        filename = self.slider.value()
-        self.ImagesBuffer.save(self.image_save_directory + '/{}Frame{}.png'.format(str(self.vidname).split('.')[-2],str(filename)))
+        frame_num = int(self.mediaPlayer.get_position() * (self.media.get_duration()))
+        self.cap.set(cv2.CAP_PROP_POS_MSEC, frame_num)  # Go to the 1 msec. position
+        ret, frame = self.cap.read()  # Retrieves the frame at the specified second
+        cv2.imwrite \
+            (self.image_save_directory + '/{}Frame{}.png'.format(str(self.vidname).split('.')[-2] ,str(frame_num)), frame)
 
     def buffer_frame(self, image):
-        self.ImagesBuffer = image#.append(image)
+        self.ImagesBuffer = image
+
+    def update_ui(self):
+
+
+        media_pos = int(self.mediaPlayer.get_position() * 10000)
+        self.slider.setValue(media_pos)
+        # No need to call this function if nothing is played
+        if not self.mediaPlayer.is_playing():
+            self.timer.stop()
+            # After the video finished, the play button stills shows "Pause",
+            # which is not the desired behavior of a media player.
+            # This fixes that "bug".
+            if not self.is_paused:
+                self.stop()
+    def stop(self):
+        """Stop player
+        """
+        self.mediaPlayer.stop()
+        self.playBtn.setIcon(
+            self.style().standardIcon(QStyle.SP_MediaPlay)
+        )
+
+    def save(self):
+        value = 0
+
+        if self.num_panels != 0:
+            for panel_index in range(1, self.num_panels + 1):
+                for i in range(len(self.startingTimelist[panel_index])):
+                    if self.startingTimelist[panel_index][i].text() != str(value) and self.endingTimelist[panel_index][i].text() != str(value):
+                        self.onsaveEntryBtnClicked(panel_index, i)
+
+
+    def clearPanels(self):
+        value = 0
+
+        if self.num_panels != 0:
+
+            for panel_index in range(1,self.num_panels+1):
+
+                for i in range(len(self.startingTimelist[panel_index])):
+
+                    self.startingTimelist[panel_index][i].setText(str(value))
+                    self.startingTimelist[panel_index][i].setStyleSheet('color: white')
+                    self.endingTimelist[panel_index][i].setText(str(value))
+                    self.endingTimelist[panel_index][i].setStyleSheet('color: white')
+                    self.saveEntryBtn[panel_index][i].setEnabled(False)
+                    self.clearEntryBtn[panel_index][i].setEnabled(False)
+
+    def close(self):
+        sys.exit(app.exec_())
 
 
 app = QApplication(sys.argv)

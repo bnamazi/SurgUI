@@ -184,7 +184,7 @@ class Window(QWidget):
         self.slider = QSlider(Qt.Horizontal)
         #self.slider.setRange(0, 0)
         #self.slider.setSingleStep(5000)
-        self.slider.setMaximum(10000)
+        self.slider.setMaximum(100000)
         self.slider.sliderMoved.connect(self.position_changed)
         # self.slider.valueChanged.connect(self.set_position)
         self.slider.sliderPressed.connect(self.position_changed)
@@ -296,13 +296,13 @@ class Window(QWidget):
 
         elif event.key() == Qt.Key_Right:
             p = self.slider.value()
-            p = p + 5 * int (10000000  / self.media.get_duration() )
+            p = p + int (500000000  / self.media.get_duration() )
             self.set_position(p)
 
         elif event.key() == Qt.Key_Left:
 
             p = self.slider.value()
-            p = p - 5 * int (10000000  / self.media.get_duration() )
+            p = p - int (500000000  / self.media.get_duration() )
             self.set_position(p)
 
 
@@ -473,7 +473,7 @@ class Window(QWidget):
         self.timer.stop()
         pos = self.slider.value()
 
-        self.mediaPlayer.set_position(pos / 10000)
+        self.mediaPlayer.set_position(pos / 100000)
         self.timer.start()
         # self.slider.setValue(pos)
 
@@ -491,7 +491,7 @@ class Window(QWidget):
         self.timer.stop()
         pos = self.slider.value()
 
-        self.mediaPlayer.set_position(position / 10000  )# / (self.media.get_duration()))
+        self.mediaPlayer.set_position(position / 100000  )# / (self.media.get_duration()))
         self.timer.start()
 
 
@@ -565,7 +565,7 @@ class Window(QWidget):
     def update_ui(self):
 
 
-        media_pos = int(self.mediaPlayer.get_position() * 10000)
+        media_pos = int(self.mediaPlayer.get_position() * 100000)
         self.slider.setValue(media_pos)
         # No need to call this function if nothing is played
         if not self.mediaPlayer.is_playing():

@@ -1,0 +1,5 @@
+Establishment of pneumoperitoneum # description of the start moment # description of the end moment
+Placement of trocars
+Isolate gallbladder
+Remove gallbladder
+Closure
